@@ -3,6 +3,7 @@ import { ipcMain, ipcRenderer } from "electron"
 const IPC_EVENT_CONNECT = "vuex-mutations-connect"
 const IPC_EVENT_NOTIFY_MAIN = "vuex-mutations-notify-main"
 const IPC_EVENT_NOTIFY_RENDERERS = "vuex-mutations-notify-renderers"
+const IPC_EVENT_REQUEST_STATE = "vuex-request-state"
 
 class SharedMutations {
   constructor(options, store) {
@@ -46,6 +47,15 @@ class SharedMutations {
     // Connect renderer to main process
     this.connect()
 
+    // Request the current store.state from the main process
+    if (this.options.syncStateOnRendererCreation === true) {
+      try {
+        this.store.replaceState(this.options.ipcRenderer.sendSync(IPC_EVENT_REQUEST_STATE))
+      } catch (error) {
+        throw new Error(`[Vuex Electron] Couldn't synchronize the main store.state with a renderer: ${error}`)
+      }
+    }
+
     // Save original Vuex methods
     this.store.originalCommit = this.store.commit
     this.store.originalDispatch = this.store.dispatch
@@ -68,6 +78,13 @@ class SharedMutations {
 
   mainProcessLogic() {
     const connections = {}
+
+    if (this.options.syncStateOnRendererCreation === true) {
+      // handler to respond to renderer request for the vuex state
+      this.options.ipcMain.on(IPC_EVENT_REQUEST_STATE, (event) => {
+        event.returnValue = this.store.state
+      })
+    }
 
     // Save new connection
     this.onConnect((event) => {
