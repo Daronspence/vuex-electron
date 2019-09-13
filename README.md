@@ -99,6 +99,17 @@ createPersistedState({
 })
 ```
 
+Available options for `createSharedMutations()`
+
+```javascript
+createSharedMutations({
+  syncStateOnRendererCreation: true
+})
+```
+
+`syncStateOnRendererCreation: true` will synchronize the main process's Vuex state with a renderer when it's created.
+Use it when `createPersistedState()` isn't used to make sure the states are synchronized (else you might end up with a different state between a renderer and the main process).
+
 ### Author
 
 Andrew Emelianenko  
