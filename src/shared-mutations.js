@@ -3,6 +3,7 @@ import { ipcMain, ipcRenderer } from "electron"
 const IPC_EVENT_CONNECT = "vuex-mutations-connect"
 const IPC_EVENT_NOTIFY_MAIN = "vuex-mutations-notify-main"
 const IPC_EVENT_NOTIFY_RENDERERS = "vuex-mutations-notify-renderers"
+const IPC_EVENT_RENDERER_REQUEST_COMMIT = "vuex-renderer-request-commit"
 const IPC_EVENT_REQUEST_STATE = "vuex-request-state"
 
 class SharedMutations {
@@ -42,6 +43,14 @@ class SharedMutations {
   onNotifyRenderers(handler) {
     this.options.ipcRenderer.on(IPC_EVENT_NOTIFY_RENDERERS, handler)
   }
+  
+  requestMain(payload) {
+	this.options.ipcRenderer.send(IPC_EVENT_RENDERER_REQUEST_COMMIT, payload)
+  }
+  
+  onRequestMain(handler) {
+	this.options.ipcMain.on(IPC_EVENT_RENDERER_REQUEST_COMMIT, handler)
+  }
 
   rendererProcessLogic() {
     // Connect renderer to main process
@@ -60,9 +69,11 @@ class SharedMutations {
     this.store.originalCommit = this.store.commit
     this.store.originalDispatch = this.store.dispatch
 
-    // Don't use commit in renderer outside of actions
-    this.store.commit = () => {
-      throw new Error(`[Vuex Electron] Please, don't use direct commit's, use dispatch instead of this.`)
+    // Forward commit to main process:
+	// Ask the main process to do the commit itself, and then it will automatically
+	// send it back to all renderer processes, including the requesting one
+    this.store.commit = (type, payload) => {
+	  this.requestMain({ type, payload })
     }
 
     // Forward dispatch to main process
@@ -103,6 +114,11 @@ class SharedMutations {
     this.onNotifyMain((event, { type, payload }) => {
       this.store.dispatch(type, payload)
     })
+	
+	// Subscribe on commit requests from renderer processes
+	this.onRequestMain((event, { type, payload }) => {
+	  this.store.commit(type, payload)
+	})
 
     // Subscribe on changes from Vuex store
     this.store.subscribe((mutation) => {
