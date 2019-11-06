@@ -69,10 +69,6 @@ Installation of the Vuex Electron easy as 1-2-3.
 
 **Usage example: [Vuex Electron Example](https://github.com/vue-electron/vuex-electron-example)**
 
-## IMPORTANT
-
-In renderer process to call actions you need to use `dispatch` or `mapActions`. Don't use `commit` because actions fired via `commit` will not be shared between processes.
-
 ### Options
 
 Available options for `createPersistedState()`
