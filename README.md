@@ -12,6 +12,12 @@
 
 The easiest way to share your Vuex Store between all processes (including main).
 
+### Fork
+
+This fork contains the following modifications:
+- properly initialize state when creating a new renderer process and when not using persistent state
+- allow renderer processes to commit mutations
+
 ### Features
 
 :star: Persisted state  
