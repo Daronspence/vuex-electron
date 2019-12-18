@@ -112,10 +112,16 @@ createSharedMutations({
 `syncStateOnRendererCreation: true` will synchronize the main process's Vuex state with a renderer when it's created.
 Use it when `createPersistedState()` isn't used to make sure the states are synchronized (else you might end up with a different state between a renderer and the main process).
 
-### Author
+### Warning
+
+Vuex-electron uses ipc to share actions and mutations between processes, so the Vuex state is subject to the same limitations that ipc has, most notably the fact that data is serialized through JSON before being sent.
+
+### Authors
 
 Andrew Emelianenko  
 IG: [@truemelianenko](https://www.instagram.com/truemelianenko)
+
+Modified by Jean Moreno for SyncSketch LLC
 
 ### License
 

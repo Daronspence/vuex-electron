@@ -1,10 +1,11 @@
 import { ipcMain, ipcRenderer } from "electron"
 
 const IPC_EVENT_CONNECT = "vuex-mutations-connect"
-const IPC_EVENT_NOTIFY_MAIN = "vuex-mutations-notify-main"
-const IPC_EVENT_NOTIFY_RENDERERS = "vuex-mutations-notify-renderers"
-const IPC_EVENT_RENDERER_REQUEST_COMMIT = "vuex-renderer-request-commit"
 const IPC_EVENT_REQUEST_STATE = "vuex-request-state"
+const IPC_EVENT_MAIN_SEND_COMMIT = "ipc-event-main-send-commit";
+const IPC_EVENT_MAIN_SEND_DISPATCH = "ipc-event-main-send-dispatch";
+const IPC_EVENT_RENDERER_SEND_COMMIT = "ipc-event-renderer-send-commit";
+const IPC_EVENT_RENDERER_SEND_DISPATCH = "ipc-event-renderer-send-dispatch";
 
 class SharedMutations {
   constructor(options, store) {
@@ -18,43 +19,9 @@ class SharedMutations {
     if (!this.options.ipcRenderer) this.options.ipcRenderer = ipcRenderer
   }
 
-  connect(payload) {
-    this.options.ipcRenderer.send(IPC_EVENT_CONNECT, payload)
-  }
-
-  onConnect(handler) {
-    this.options.ipcMain.on(IPC_EVENT_CONNECT, handler)
-  }
-
-  notifyMain(payload) {
-    this.options.ipcRenderer.send(IPC_EVENT_NOTIFY_MAIN, payload)
-  }
-
-  onNotifyMain(handler) {
-    this.options.ipcMain.on(IPC_EVENT_NOTIFY_MAIN, handler)
-  }
-
-  notifyRenderers(connections, payload) {
-    Object.keys(connections).forEach((processId) => {
-      connections[processId].send(IPC_EVENT_NOTIFY_RENDERERS, payload)
-    })
-  }
-
-  onNotifyRenderers(handler) {
-    this.options.ipcRenderer.on(IPC_EVENT_NOTIFY_RENDERERS, handler)
-  }
-  
-  requestMain(payload) {
-	this.options.ipcRenderer.send(IPC_EVENT_RENDERER_REQUEST_COMMIT, payload)
-  }
-  
-  onRequestMain(handler) {
-	this.options.ipcMain.on(IPC_EVENT_RENDERER_REQUEST_COMMIT, handler)
-  }
-
   rendererProcessLogic() {
     // Connect renderer to main process
-    this.connect()
+	this.options.ipcRenderer.send(IPC_EVENT_CONNECT, process.pid);
 
     // Request the current store.state from the main process
     if (this.options.syncStateOnRendererCreation === true) {
@@ -69,22 +36,27 @@ class SharedMutations {
     this.store.originalCommit = this.store.commit
     this.store.originalDispatch = this.store.dispatch
 
-    // Forward commit to main process:
-	// Ask the main process to do the commit itself, and then it will automatically
-	// send it back to all renderer processes, including the requesting one
+    // Commit override: perform locally, and send it to main process which will dispatch back to all other renderers
     this.store.commit = (type, payload) => {
-	  this.requestMain({ type, payload })
+	  this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_COMMIT, type, payload, process.pid);
+	  return this.store.originalCommit(type, payload);
     }
 
-    // Forward dispatch to main process
+    // Dispatch override: perform locally, and send it to main process which will dispatch back to all other renderers
     this.store.dispatch = (type, payload) => {
-      this.notifyMain({ type, payload })
+	  this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_DISPATCH, type, payload, process.pid);
+	  return this.store.originalDispatch(type, payload);
     }
-
-    // Subscribe on changes from main process and apply them
-    this.onNotifyRenderers((event, { type, payload }) => {
-      this.store.originalCommit(type, payload)
-    })
+	
+	// Commit received from main
+	this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_COMMIT, (event, type, payload) => {
+		this.store.originalCommit(type, payload);
+	});
+	
+	// Dispatch received from main
+	this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_DISPATCH, (event, type, payload) => {
+		this.store.originalDispatch(type, payload);
+	});
   }
 
   mainProcessLogic() {
@@ -98,35 +70,50 @@ class SharedMutations {
     }
 
     // Save new connection
-    this.onConnect((event) => {
+	this.options.ipcMain.on(IPC_EVENT_CONNECT, (event, pid) => {
       const win = event.sender
-      const winId = win.id
-
-      connections[winId] = win
+      connections[pid] = win
 
       // Remove connection when window is closed
       win.on("destroyed", () => {
-        delete connections[winId]
+        delete connections[pid]
       })
     })
-
-    // Subscribe on changes from renderer processes
-    this.onNotifyMain((event, { type, payload }) => {
-      this.store.dispatch(type, payload)
-    })
+    
+    // Save original Vuex methods
+    this.store.originalCommit = this.store.commit
+    this.store.originalDispatch = this.store.dispatch
 	
-	// Subscribe on commit requests from renderer processes
-	this.onRequestMain((event, { type, payload }) => {
-	  this.store.commit(type, payload)
-	})
-
-    // Subscribe on changes from Vuex store
-    this.store.subscribe((mutation) => {
-      const { type, payload } = mutation
-
-      // Forward changes to renderer processes
-      this.notifyRenderers(connections, { type, payload })
-    })
+	
+	// Override store.commit: perform commit locally, and send it to renderers excepted the original one if any
+	this.store.commit = (type, payload, pid) => {
+      Object.keys(connections).forEach((processId) => {
+        if (parseInt(processId, 10) != pid) {
+          connections[processId].send(IPC_EVENT_MAIN_SEND_COMMIT, type, payload)
+        }
+      })
+      return this.store.originalCommit(type, payload)
+	}
+	
+	// Override store.dispatch: perform dispatch locally, and send it to renderers excepted the original one if any
+	this.store.dispatch = (type, payload, pid) => {
+      Object.keys(connections).forEach((processId) => {
+        if (parseInt(processId, 10) !== pid) {
+          connections[processId].send(IPC_EVENT_MAIN_SEND_DISPATCH, type, payload)
+        }
+      })
+      return this.store.originalDispatch(type, payload)
+	}
+	
+	// Commit received from renderer
+	this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_COMMIT, (event, type, payload, pid) => {
+		this.store.commit(type, payload, pid);
+	});
+	
+	// Dispatch received from renderer
+	this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_DISPATCH, (event, type, payload, pid) => {
+		this.store.dispatch(type, payload, pid);
+	});
   }
 
   activatePlugin() {
