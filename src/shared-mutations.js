@@ -1,6 +1,7 @@
 import { ipcMain, ipcRenderer } from "electron"
 
 const IPC_EVENT_CONNECT = "vuex-mutations-connect"
+const IPC_EVENT_DISCONNECT = "vuex-mutations-disconnect"
 const IPC_EVENT_REQUEST_STATE = "vuex-request-state"
 const IPC_EVENT_MAIN_SEND_COMMIT = "ipc-event-main-send-commit";
 const IPC_EVENT_MAIN_SEND_DISPATCH = "ipc-event-main-send-dispatch";
@@ -21,7 +22,13 @@ class SharedMutations {
 
   rendererProcessLogic() {
     // Connect renderer to main process
-	this.options.ipcRenderer.send(IPC_EVENT_CONNECT, process.pid);
+    this.options.ipcRenderer.send(IPC_EVENT_CONNECT, process.pid);
+
+    // Disconnect when process exits
+    // (this is seemingly only useful when hot reloading in dev...)
+    process.on("exit", () => {
+      this.options.ipcRenderer.send(IPC_EVENT_DISCONNECT, process.pid);
+    });
 
     // Request the current store.state from the main process
     if (this.options.syncStateOnRendererCreation === true) {
@@ -38,25 +45,25 @@ class SharedMutations {
 
     // Commit override: perform locally, and send it to main process which will dispatch back to all other renderers
     this.store.commit = (type, payload) => {
-	  this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_COMMIT, type, payload, process.pid);
-	  return this.store.originalCommit(type, payload);
+      this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_COMMIT, type, payload, process.pid);
+      return this.store.originalCommit(type, payload);
     }
 
     // Dispatch override: perform locally, and send it to main process which will dispatch back to all other renderers
     this.store.dispatch = (type, payload) => {
-	  this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_DISPATCH, type, payload, process.pid);
-	  return this.store.originalDispatch(type, payload);
+      this.options.ipcRenderer.send(IPC_EVENT_RENDERER_SEND_DISPATCH, type, payload, process.pid);
+      return this.store.originalDispatch(type, payload);
     }
-	
-	// Commit received from main
-	this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_COMMIT, (event, type, payload) => {
-		this.store.originalCommit(type, payload);
-	});
-	
-	// Dispatch received from main
-	this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_DISPATCH, (event, type, payload) => {
-		this.store.originalDispatch(type, payload);
-	});
+    
+    // Commit received from main
+    this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_COMMIT, (event, type, payload) => {
+        this.store.originalCommit(type, payload);
+    });
+    
+    // Dispatch received from main
+    this.options.ipcRenderer.on(IPC_EVENT_MAIN_SEND_DISPATCH, (event, type, payload) => {
+        this.store.originalDispatch(type, payload);
+    });
   }
 
   mainProcessLogic() {
@@ -70,7 +77,7 @@ class SharedMutations {
     }
 
     // Save new connection
-	this.options.ipcMain.on(IPC_EVENT_CONNECT, (event, pid) => {
+    this.options.ipcMain.on(IPC_EVENT_CONNECT, (event, pid) => {
       const win = event.sender
       connections[pid] = win
 
@@ -80,40 +87,47 @@ class SharedMutations {
       })
     })
     
+    // Remove connection
+    this.options.ipcMain.on(IPC_EVENT_DISCONNECT, (event, pid) => {
+      if (connections.hasOwnProperty(pid)) {
+        delete connections[pid]
+      }
+    })
+    
     // Save original Vuex methods
     this.store.originalCommit = this.store.commit
     this.store.originalDispatch = this.store.dispatch
-	
-	
-	// Override store.commit: perform commit locally, and send it to renderers excepted the original one if any
-	this.store.commit = (type, payload, pid) => {
+    
+    
+    // Override store.commit: perform commit locally, and send it to renderers excepted the original one if any
+    this.store.commit = (type, payload, pid) => {
       Object.keys(connections).forEach((processId) => {
         if (parseInt(processId, 10) != pid) {
           connections[processId].send(IPC_EVENT_MAIN_SEND_COMMIT, type, payload)
         }
       })
       return this.store.originalCommit(type, payload)
-	}
-	
-	// Override store.dispatch: perform dispatch locally, and send it to renderers excepted the original one if any
-	this.store.dispatch = (type, payload, pid) => {
+    }
+    
+    // Override store.dispatch: perform dispatch locally, and send it to renderers excepted the original one if any
+    this.store.dispatch = (type, payload, pid) => {
       Object.keys(connections).forEach((processId) => {
         if (parseInt(processId, 10) !== pid) {
           connections[processId].send(IPC_EVENT_MAIN_SEND_DISPATCH, type, payload)
         }
       })
       return this.store.originalDispatch(type, payload)
-	}
-	
-	// Commit received from renderer
-	this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_COMMIT, (event, type, payload, pid) => {
-		this.store.commit(type, payload, pid);
-	});
-	
-	// Dispatch received from renderer
-	this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_DISPATCH, (event, type, payload, pid) => {
-		this.store.dispatch(type, payload, pid);
-	});
+    }
+    
+    // Commit received from renderer
+    this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_COMMIT, (event, type, payload, pid) => {
+        this.store.commit(type, payload, pid);
+    });
+    
+    // Dispatch received from renderer
+    this.options.ipcMain.on(IPC_EVENT_RENDERER_SEND_DISPATCH, (event, type, payload, pid) => {
+        this.store.dispatch(type, payload, pid);
+    });
   }
 
   activatePlugin() {

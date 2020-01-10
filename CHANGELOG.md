@@ -1,5 +1,10 @@
 # Changelog
 
+### Changes by Jean Moreno
+
+- Mutations now work in renderer processes
+- State can be explicitly synchronized in a new renderer process (useful if persisted state isn't enabled)
+
 ### 1.0.3
 
 - Move `electron`, `vue`, and `vuex` to `devDependencies` 
